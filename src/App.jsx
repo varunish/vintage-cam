@@ -6,11 +6,12 @@ import './App.css';
 // Cap DPR so pixel-processing stays fast on high-density screens
 const MAX_DPR = 2;
 
-// Video constraints — portrait ideal, environment camera
+// Let the device pick its native resolution and orientation.
+// Specifying landscape dimensions (e.g. 1920×1080) on a portrait phone can
+// cause the driver to return a landscape stream whose raw pixels are then
+// drawn to the canvas without the rotation metadata → vertical stretch.
 const VIDEO_CONSTRAINTS = {
   facingMode: 'environment',
-  width:  { ideal: 1920 },
-  height: { ideal: 1080 },
 };
 
 export default function App() {
@@ -29,10 +30,39 @@ export default function App() {
   // ── Get (and cache) canvas 2d context ───────────────────────────────────────
   const getCtx = useCallback(() => {
     if (!ctxRef.current && canvasRef.current) {
-      // willReadFrequently tells the browser to optimise for frequent getImageData
       ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
     }
     return ctxRef.current;
+  }, []);
+
+  // ── Pre-size canvas and keep it in sync with layout ──────────────────────────
+  // This runs before the animation loop so frame-0 already has correct dims.
+  // getBoundingClientRect() is layout-synchronous; clientWidth/clientHeight can
+  // return the default 300×150 canvas intrinsic size before CSS layout fires,
+  // which produces a landscape buffer that CSS then stretches → vertical distortion.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width < 50 || rect.height < 50) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      const w   = Math.round(rect.width  * dpr);
+      const h   = Math.round(rect.height * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width  = w;
+        canvas.height = h;
+        // Invalidate cached context — resizing canvas resets it
+        ctxRef.current = null;
+      }
+    };
+
+    // Size immediately, then track orientation/window changes
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
+    return () => ro.disconnect();
   }, []);
 
   // ── Animation loop ──────────────────────────────────────────────────────────
@@ -41,20 +71,22 @@ export default function App() {
       // webcamRef.current.video is the underlying HTMLVideoElement (react-webcam API)
       const video  = webcamRef.current?.video;
       const canvas = canvasRef.current;
-      const ctx    = getCtx();
 
-      if (video && canvas && ctx && video.readyState >= 2) {
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
+      if (video && canvas && video.readyState >= 2) {
+        // Re-fetch context each tick in case a resize invalidated it
+        const ctx = getCtx();
+        const vw  = video.videoWidth;
+        const vh  = video.videoHeight;
 
-        if (vw > 0 && vh > 0) {
-          // Canvas display dimensions from the element itself
-          // (clientWidth/Height match actual CSS pixel size after first layout)
-          const cw = canvas.clientWidth;
-          const ch = canvas.clientHeight;
+        if (ctx && vw > 0 && vh > 0) {
+          // getBoundingClientRect is layout-synchronous — unlike clientWidth it
+          // never returns the canvas's default 300×150 intrinsic size.
+          const rect  = canvas.getBoundingClientRect();
+          const cw    = rect.width;
+          const ch    = rect.height;
 
-          // Skip if canvas hasn't been laid out yet
-          if (cw === 0 || ch === 0) {
+          // Skip until the canvas has a sensible rendered size
+          if (cw < 50 || ch < 50) {
             rafRef.current = requestAnimationFrame(tick);
             return;
           }
@@ -66,6 +98,7 @@ export default function App() {
           if (canvas.width !== dispW || canvas.height !== dispH) {
             canvas.width  = dispW;
             canvas.height = dispH;
+            ctxRef.current = null; // canvas resize invalidates the context
           }
 
           // object-fit: cover — scale video stream to fill canvas, centre-crop
