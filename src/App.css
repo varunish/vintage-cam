@@ -1,52 +1,91 @@
 /* ── Reset ───────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html, body, #root {
+html {
   height: 100%;
-  width: 100%;
-  overflow: hidden;
-  background: #000;
+  /* Safari: avoids address-bar height collapse */
+  height: -webkit-fill-available;
 }
 
 body {
+  margin: 0;
+  height: 100%;
+  height: -webkit-fill-available;
+  background: #000;
+  overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   color: #f0f0f0;
 }
 
+#root {
+  height: 100%;
+  height: -webkit-fill-available;
+  overflow: hidden;
+}
+
 /* ── App shell ───────────────────────────────────────────────────────────── */
-/* Fixed to viewport — exactly like a native camera app */
+/*
+  position:fixed + inset:0 makes it cover the full viewport regardless of
+  the browser chrome on any mobile browser.
+*/
 .app {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: #000;
   overflow: hidden;
 }
 
-/* ── Viewfinder canvas — fills the entire screen ─────────────────────────── */
+/* ── Webcam background layer ─────────────────────────────────────────────── */
+/*
+  The <Webcam> video element sits behind the canvas (z-index 0).
+  opacity:0 keeps it invisible while still letting the browser initialise
+  the stream and report correct videoWidth / videoHeight every frame.
+  object-fit:cover mirrors what the canvas draw does, so if the canvas
+  ever lags there's no flash of wrong-sized content.
+*/
+.webcam-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── Viewfinder canvas ───────────────────────────────────────────────────── */
 .viewfinder {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   display: block;
+  z-index: 1;
 }
 
-/* ── Controls overlay — floats over the bottom of the viewfinder ─────────── */
+/* ── Controls overlay ────────────────────────────────────────────────────── */
 .controls-overlay {
   position: absolute;
-  bottom: 0;
   left: 0;
   right: 0;
-  /* Gradient so controls stay readable over any image */
+  bottom: 0;
+  z-index: 2;
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.25) 30%,
-    rgba(0, 0, 0, 0.72) 100%
+    rgba(0, 0, 0, 0.22) 25%,
+    rgba(0, 0, 0, 0.70) 100%
   );
+  /* Respect iPhone home bar */
   padding-bottom: max(28px, env(safe-area-inset-bottom, 28px));
-  pointer-events: none; /* let children handle their own events */
+  pointer-events: none;
 }
 
 /* ── Filter selector ─────────────────────────────────────────────────────── */
@@ -54,7 +93,7 @@ body {
   display: flex;
   flex-direction: row;
   gap: 10px;
-  padding: 0 20px 20px;
+  padding: 0 20px 18px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -68,30 +107,30 @@ body {
   padding: 7px 20px;
   border-radius: 999px;
   border: 1.5px solid rgba(255, 255, 255, 0.3);
-  background: rgba(0, 0, 0, 0.30);
+  background: rgba(0, 0, 0, 0.35);
   color: rgba(255, 255, 255, 0.55);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
   white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
 .filter-pill.active {
   border-color: #fff;
   color: #fff;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 /* ── Capture button ──────────────────────────────────────────────────────── */
 .capture-row {
   display: flex;
   justify-content: center;
-  padding: 0 0 8px;
+  padding-bottom: 8px;
   pointer-events: all;
 }
 
@@ -100,29 +139,25 @@ body {
   height: 76px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.95);
-  /* Two rings: inner solid + outer faint */
-  border: 3px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 0 0 3px rgba(255, 255, 255, 0.0),
-    0 0 0 5px rgba(255, 255, 255, 0.25);
+  border: 3px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.22);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition: transform 0.12s ease, opacity 0.12s ease;
 }
 
 .capture-btn:active {
   transform: scale(0.88);
-  box-shadow:
-    0 0 0 3px rgba(255, 255, 255, 0.0),
-    0 0 0 5px rgba(255, 255, 255, 0.12);
+  opacity: 0.85;
 }
 
-/* ── Taint warning ───────────────────────────────────────────────────────── */
+/* ── Taint / SecurityError warning ──────────────────────────────────────── */
 .taint-warning {
   position: absolute;
   top: max(16px, env(safe-area-inset-top, 16px));
   left: 50%;
   transform: translateX(-50%);
+  z-index: 3;
   background: rgba(0, 0, 0, 0.65);
   color: rgba(255, 255, 255, 0.85);
   font-size: 12px;
@@ -138,10 +173,11 @@ body {
 .tap-overlay {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.52);
   color: #fff;
   font-size: 22px;
   font-weight: 600;
@@ -151,11 +187,14 @@ body {
   width: 100%;
 }
 
-/* ── Preview screen — fullscreen after capture ───────────────────────────── */
+/* ── Preview screen ──────────────────────────────────────────────────────── */
 .preview-screen {
   position: fixed;
-  inset: 0;
-  z-index: 200;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
   background: #000;
   animation: fadeIn 0.18s ease both;
 }
@@ -167,7 +206,8 @@ body {
 
 .preview-img {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -176,13 +216,13 @@ body {
 
 .preview-actions {
   position: absolute;
-  bottom: 0;
   left: 0;
   right: 0;
+  bottom: 0;
   display: flex;
   gap: 12px;
   padding: 24px 20px max(28px, env(safe-area-inset-bottom, 28px));
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.70));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.72));
 }
 
 .btn-retake,
@@ -194,8 +234,8 @@ body {
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
-  transition: opacity 0.15s;
   -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s;
 }
 
 .btn-retake:active,
@@ -218,7 +258,10 @@ body {
 /* ── Error screen ────────────────────────────────────────────────────────── */
 .error-screen {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -234,14 +277,15 @@ body {
   max-width: 280px;
 }
 
-/* ── Desktop: center a phone-sized column ────────────────────────────────── */
+/* ── Desktop: phone-sized centred column ─────────────────────────────────── */
 @media (min-width: 600px) {
   .app {
-    /* Contain the camera view in a centered column on wide screens */
+    /* Reset inset-based edges, then centre a 390px column */
     left: 50%;
-    transform: translateX(-50%);
+    right: auto;          /* un-set the right:0 from base .app */
     width: 390px;
-    border-left:  1px solid #1a1a1a;
-    border-right: 1px solid #1a1a1a;
+    transform: translateX(-50%);
+    border-left:  1px solid #1c1c1c;
+    border-right: 1px solid #1c1c1c;
   }
 }
