@@ -3,23 +3,17 @@ import Webcam from 'react-webcam';
 import { FILTER_PRESETS } from './FilterEngine';
 import './App.css';
 
-// Cap DPR so pixel-processing stays fast on high-density screens
-const MAX_DPR = 2;
-
-// Let the device pick its native resolution and orientation.
-// Specifying landscape dimensions (e.g. 1920×1080) on a portrait phone can
-// cause the driver to return a landscape stream whose raw pixels are then
-// drawn to the canvas without the rotation metadata → vertical stretch.
-const VIDEO_CONSTRAINTS = {
-  facingMode: 'environment',
-};
+// CSS filter strings for live preview — close visual approximation of each preset.
+// The captured photo uses the full pixel-accurate LUT filters from FilterEngine.
+const CSS_PREVIEWS = [
+  'sepia(0.28) saturate(1.35) contrast(1.06) brightness(1.02)',           // Kodak
+  'contrast(1.45) brightness(1.18) saturate(0.8) sepia(0.12)',            // Polaroid
+  'sepia(0.48) saturate(1.9) hue-rotate(-8deg) contrast(1.12)',           // 70s
+  'saturate(0.55) brightness(1.12) contrast(0.88) sepia(0.06)',           // Faded
+];
 
 export default function App() {
-  const webcamRef  = useRef(null);
-  const canvasRef  = useRef(null);
-  const rafRef     = useRef(null);
-  // Cache canvas 2d context so we don't re-fetch every frame
-  const ctxRef     = useRef(null);
+  const webcamRef = useRef(null);
 
   const [activeFilter, setActiveFilter] = useState(0);
   const [capturedUrl, setCapturedUrl]   = useState(null);
@@ -27,118 +21,7 @@ export default function App() {
   const [camReady, setCamReady]         = useState(false);
   const [needsTap, setNeedsTap]         = useState(false);
 
-  // ── Get (and cache) canvas 2d context ───────────────────────────────────────
-  const getCtx = useCallback(() => {
-    if (!ctxRef.current && canvasRef.current) {
-      ctxRef.current = canvasRef.current.getContext('2d', { willReadFrequently: true });
-    }
-    return ctxRef.current;
-  }, []);
-
-  // ── Pre-size canvas and keep it in sync with layout ──────────────────────────
-  // This runs before the animation loop so frame-0 already has correct dims.
-  // getBoundingClientRect() is layout-synchronous; clientWidth/clientHeight can
-  // return the default 300×150 canvas intrinsic size before CSS layout fires,
-  // which produces a landscape buffer that CSS then stretches → vertical distortion.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width < 50 || rect.height < 50) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-      const w   = Math.round(rect.width  * dpr);
-      const h   = Math.round(rect.height * dpr);
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width  = w;
-        canvas.height = h;
-        // Invalidate cached context — resizing canvas resets it
-        ctxRef.current = null;
-      }
-    };
-
-    // Size immediately, then track orientation/window changes
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, []);
-
-  // ── Animation loop ──────────────────────────────────────────────────────────
-  const startLoop = useCallback(() => {
-    const tick = () => {
-      // webcamRef.current.video is the underlying HTMLVideoElement (react-webcam API)
-      const video  = webcamRef.current?.video;
-      const canvas = canvasRef.current;
-
-      if (video && canvas && video.readyState >= 2) {
-        // Re-fetch context each tick in case a resize invalidated it
-        const ctx = getCtx();
-        const vw  = video.videoWidth;
-        const vh  = video.videoHeight;
-
-        if (ctx && vw > 0 && vh > 0) {
-          // getBoundingClientRect is layout-synchronous — unlike clientWidth it
-          // never returns the canvas's default 300×150 intrinsic size.
-          const rect  = canvas.getBoundingClientRect();
-          const cw    = rect.width;
-          const ch    = rect.height;
-
-          // Skip until the canvas has a sensible rendered size
-          if (cw < 50 || ch < 50) {
-            rafRef.current = requestAnimationFrame(tick);
-            return;
-          }
-
-          const dpr   = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-          const dispW = Math.round(cw * dpr);
-          const dispH = Math.round(ch * dpr);
-
-          if (canvas.width !== dispW || canvas.height !== dispH) {
-            canvas.width  = dispW;
-            canvas.height = dispH;
-            ctxRef.current = null; // canvas resize invalidates the context
-          }
-
-          // object-fit: cover — scale video stream to fill canvas, centre-crop
-          const scale = Math.max(dispW / vw, dispH / vh);
-          const dw    = vw * scale;
-          const dh    = vh * scale;
-          ctx.drawImage(video, (dispW - dw) / 2, (dispH - dh) / 2, dw, dh);
-
-          try {
-            const imageData = ctx.getImageData(0, 0, dispW, dispH);
-            FILTER_PRESETS[activeFilter].apply(imageData, dispW, dispH);
-            ctx.putImageData(imageData, 0, 0);
-          } catch (err) {
-            if (err.name === 'SecurityError') setCamError('taint');
-          }
-        }
-      }
-
-      rafRef.current = requestAnimationFrame(tick);
-    };
-
-    rafRef.current = requestAnimationFrame(tick);
-  }, [activeFilter, getCtx]);
-
-  const stopLoop = useCallback(() => {
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-  }, []);
-
-  // Restart loop when filter or preview state changes
-  useEffect(() => {
-    if (capturedUrl) return;
-    stopLoop();
-    startLoop();
-    return stopLoop;
-  }, [activeFilter, capturedUrl, startLoop, stopLoop]);
-
-  // iOS autoplay watchdog — show "Tap to Start" if stream stalls after 2s
+  // iOS autoplay watchdog
   useEffect(() => {
     if (!camReady) return;
     const timer = setTimeout(() => {
@@ -148,18 +31,12 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [camReady, camError]);
 
-  // ── Camera callbacks ────────────────────────────────────────────────────────
-  const handleUserMedia = useCallback(() => {
-    setCamReady(true);
-  }, []);
+  // ── Camera callbacks ──────────────────────────────────────────────────────
+  const handleUserMedia = useCallback(() => setCamReady(true), []);
 
   const handleUserMediaError = useCallback((err) => {
     const name = err?.name || '';
-    if (
-      name === 'NotAllowedError' ||
-      name === 'PermissionDeniedError' ||
-      err?.message?.includes('Permission')
-    ) {
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
       setCamError('denied');
     } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       setCamError('notfound');
@@ -168,23 +45,38 @@ export default function App() {
     }
   }, []);
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  // ── Capture ───────────────────────────────────────────────────────────────
+  // Draw the current video frame to an offscreen canvas at native video
+  // resolution, apply the real LUT pixel filter, then save as JPEG.
   const handleCapture = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    stopLoop();
-    setCapturedUrl(canvas.toDataURL('image/jpeg', 0.92));
-  }, [stopLoop]);
+    const video = webcamRef.current?.video;
+    if (!video || video.readyState < 2) return;
 
-  const handleRetake = useCallback(() => {
-    setCapturedUrl(null);
-  }, []);
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = vw;
+    canvas.height = vh;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    ctx.drawImage(video, 0, 0, vw, vh);
+
+    const imageData = ctx.getImageData(0, 0, vw, vh);
+    FILTER_PRESETS[activeFilter].apply(imageData, vw, vh);
+    ctx.putImageData(imageData, 0, 0);
+
+    setCapturedUrl(canvas.toDataURL('image/jpeg', 0.92));
+  }, [activeFilter]);
+
+  const handleRetake = useCallback(() => setCapturedUrl(null), []);
 
   const handleDownload = useCallback(() => {
     if (!capturedUrl) return;
-    const a      = document.createElement('a');
-    a.href       = capturedUrl;
-    a.download   = `vintage-photo-${Date.now()}.jpg`;
+    const a    = document.createElement('a');
+    a.href     = capturedUrl;
+    a.download = `vintage-photo-${Date.now()}.jpg`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -195,7 +87,7 @@ export default function App() {
     setNeedsTap(false);
   }, []);
 
-  // ── Error screens ───────────────────────────────────────────────────────────
+  // ── Error screens ─────────────────────────────────────────────────────────
   if (camError === 'denied') {
     return (
       <div className="error-screen">
@@ -215,40 +107,32 @@ export default function App() {
     <div className="app">
 
       {/*
-        Webcam is rendered VISIBLE, filling the screen, but invisible (opacity:0).
-        This ensures the browser properly initialises the stream and reports
-        correct videoWidth / videoHeight — display:none breaks this on mobile.
-        The canvas on top (z-index:1) always covers it.
+        react-webcam renders a <video> element that fills the container.
+        object-fit:cover (applied via .webcam-video CSS) handles the aspect
+        ratio scaling natively — zero canvas sizing bugs.
+        A CSS filter gives instant live preview of the selected preset.
+        The saved photo uses the full pixel-accurate LUT filter (FilterEngine).
       */}
       <Webcam
         ref={webcamRef}
         audio={false}
         playsInline
         muted
-        videoConstraints={VIDEO_CONSTRAINTS}
-        className="webcam-bg"
+        videoConstraints={{ facingMode: 'environment' }}
+        className="webcam-video"
+        style={{ filter: CSS_PREVIEWS[activeFilter] }}
         onUserMedia={handleUserMedia}
         onUserMediaError={handleUserMediaError}
       />
 
-      {/* Filtered viewfinder — drawn every RAF tick */}
-      <canvas ref={canvasRef} className="viewfinder" />
-
-      {/* Canvas SecurityError fallback */}
-      {camError === 'taint' && (
-        <div className="taint-warning">
-          Filter preview unavailable on this browser — capture still works
-        </div>
-      )}
-
-      {/* iOS tap-to-start overlay */}
+      {/* iOS tap-to-start */}
       {needsTap && (
         <button className="tap-overlay" onClick={handleTap}>
           Tap to Start
         </button>
       )}
 
-      {/* Bottom controls — float above the viewfinder */}
+      {/* Bottom controls */}
       <div className="controls-overlay">
         <div className="filter-bar" role="listbox" aria-label="Filter presets">
           {FILTER_PRESETS.map((preset, i) => (
@@ -269,11 +153,12 @@ export default function App() {
             className="capture-btn"
             aria-label="Capture photo"
             onClick={handleCapture}
+            disabled={!camReady}
           />
         </div>
       </div>
 
-      {/* Full-screen preview after capture */}
+      {/* Full-screen preview */}
       {capturedUrl && (
         <div className="preview-screen">
           <img src={capturedUrl} alt="Captured" className="preview-img" />

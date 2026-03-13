@@ -3,12 +3,9 @@
 
 html {
   height: 100%;
-  /* Safari: avoids address-bar height collapse */
   height: -webkit-fill-available;
 }
-
 body {
-  margin: 0;
   height: 100%;
   height: -webkit-fill-available;
   background: #000;
@@ -17,7 +14,6 @@ body {
   -webkit-font-smoothing: antialiased;
   color: #f0f0f0;
 }
-
 #root {
   height: 100%;
   height: -webkit-fill-available;
@@ -25,65 +21,39 @@ body {
 }
 
 /* ── App shell ───────────────────────────────────────────────────────────── */
-/*
-  position:fixed + inset:0 makes it cover the full viewport regardless of
-  the browser chrome on any mobile browser.
-*/
 .app {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   background: #000;
   overflow: hidden;
 }
 
-/* ── Webcam background layer ─────────────────────────────────────────────── */
+/* ── Live viewfinder — react-webcam <video> element ─────────────────────── */
 /*
-  The <Webcam> video element sits behind the canvas (z-index 0).
-  opacity:0 keeps it invisible while still letting the browser initialise
-  the stream and report correct videoWidth / videoHeight every frame.
-  object-fit:cover mirrors what the canvas draw does, so if the canvas
-  ever lags there's no flash of wrong-sized content.
+  object-fit:cover is natively supported on <video> elements.
+  The browser handles all aspect-ratio cropping without any JS math.
+  The CSS filter prop on the element gives the live filter preview.
 */
-.webcam-bg {
+.webcam-video {
   position: absolute;
-  top: 0;
-  left: 0;
+  top: 0; left: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-/* ── Viewfinder canvas ───────────────────────────────────────────────────── */
-.viewfinder {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  z-index: 1;
+  transition: filter 0.2s ease;
 }
 
 /* ── Controls overlay ────────────────────────────────────────────────────── */
 .controls-overlay {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 2;
+  left: 0; right: 0; bottom: 0;
+  z-index: 10;
   background: linear-gradient(
     to bottom,
     transparent 0%,
     rgba(0, 0, 0, 0.22) 25%,
-    rgba(0, 0, 0, 0.70) 100%
+    rgba(0, 0, 0, 0.72) 100%
   );
-  /* Respect iPhone home bar */
   padding-bottom: max(28px, env(safe-area-inset-bottom, 28px));
   pointer-events: none;
 }
@@ -91,7 +61,6 @@ body {
 /* ── Filter selector ─────────────────────────────────────────────────────── */
 .filter-bar {
   display: flex;
-  flex-direction: row;
   gap: 10px;
   padding: 0 20px 18px;
   overflow-x: auto;
@@ -99,7 +68,6 @@ body {
   scrollbar-width: none;
   pointer-events: all;
 }
-
 .filter-bar::-webkit-scrollbar { display: none; }
 
 .filter-pill {
@@ -119,7 +87,6 @@ body {
   -webkit-backdrop-filter: blur(8px);
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
-
 .filter-pill.active {
   border-color: #fff;
   color: #fff;
@@ -145,35 +112,14 @@ body {
   -webkit-tap-highlight-color: transparent;
   transition: transform 0.12s ease, opacity 0.12s ease;
 }
-
-.capture-btn:active {
-  transform: scale(0.88);
-  opacity: 0.85;
-}
-
-/* ── Taint / SecurityError warning ──────────────────────────────────────── */
-.taint-warning {
-  position: absolute;
-  top: max(16px, env(safe-area-inset-top, 16px));
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 3;
-  background: rgba(0, 0, 0, 0.65);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 12px;
-  padding: 6px 16px;
-  border-radius: 20px;
-  white-space: nowrap;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
+.capture-btn:active  { transform: scale(0.88); opacity: 0.85; }
+.capture-btn:disabled { opacity: 0.35; cursor: default; }
 
 /* ── iOS tap-to-start ────────────────────────────────────────────────────── */
 .tap-overlay {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -190,15 +136,11 @@ body {
 /* ── Preview screen ──────────────────────────────────────────────────────── */
 .preview-screen {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   z-index: 100;
   background: #000;
   animation: fadeIn 0.18s ease both;
 }
-
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -206,19 +148,16 @@ body {
 
 .preview-img {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
 .preview-actions {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 0; right: 0; bottom: 0;
   display: flex;
   gap: 12px;
   padding: 24px 20px max(28px, env(safe-area-inset-bottom, 28px));
@@ -237,9 +176,7 @@ body {
   -webkit-tap-highlight-color: transparent;
   transition: opacity 0.15s;
 }
-
-.btn-retake:active,
-.btn-save:active { opacity: 0.72; }
+.btn-retake:active, .btn-save:active { opacity: 0.72; }
 
 .btn-retake {
   background: rgba(0, 0, 0, 0.4);
@@ -248,7 +185,6 @@ body {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
-
 .btn-save {
   background: #fff;
   border: none;
@@ -258,10 +194,7 @@ body {
 /* ── Error screen ────────────────────────────────────────────────────────── */
 .error-screen {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -269,7 +202,6 @@ body {
   padding: 32px;
   text-align: center;
 }
-
 .error-screen p {
   font-size: 17px;
   color: rgba(255, 255, 255, 0.65);
@@ -277,12 +209,11 @@ body {
   max-width: 280px;
 }
 
-/* ── Desktop: phone-sized centred column ─────────────────────────────────── */
+/* ── Desktop: centred phone column ───────────────────────────────────────── */
 @media (min-width: 600px) {
   .app {
-    /* Reset inset-based edges, then centre a 390px column */
     left: 50%;
-    right: auto;          /* un-set the right:0 from base .app */
+    right: auto;
     width: 390px;
     transform: translateX(-50%);
     border-left:  1px solid #1c1c1c;
