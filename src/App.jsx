@@ -3,7 +3,8 @@ import Webcam from 'react-webcam';
 import { FILTER_PRESETS } from './FilterEngine';
 import './App.css';
 
-const ASPECT = 3 / 4; // portrait 3:4
+// Cap DPR so pixel-processing stays fast on high-density screens
+const MAX_DPR = 2;
 
 export default function App() {
   const webcamRef = useRef(null);
@@ -12,54 +13,50 @@ export default function App() {
 
   const [activeFilter, setActiveFilter] = useState(0);
   const [capturedUrl, setCapturedUrl]   = useState(null);
-  const [dims, setDims]                 = useState({ width: 640, height: 480 });
-  const [camError, setCamError]         = useState(null); // 'denied' | 'notfound' | 'taint'
+  const [camError, setCamError]         = useState(null);
   const [needsTap, setNeedsTap]         = useState(false);
   const [tapDone, setTapDone]           = useState(false);
 
-  // ── Keep canvas dims in sync with actual video resolution ──────────────────
-  const syncDims = useCallback(() => {
-    const video = webcamRef.current?.video;
-    if (!video) return;
-    const w = video.videoWidth  || 640;
-    const h = video.videoHeight || 480;
-    if (w !== dims.width || h !== dims.height) {
-      setDims({ width: w, height: h });
-    }
-  }, [dims]);
-
-  // ── Animation loop ─────────────────────────────────────────────────────────
+  // ── Animation loop ──────────────────────────────────────────────────────────
   const startLoop = useCallback(() => {
     const tick = () => {
       const video  = webcamRef.current?.video;
       const canvas = canvasRef.current;
-      if (video && canvas && video.readyState >= 2) {
-        const w = video.videoWidth  || dims.width;
-        const h = video.videoHeight || dims.height;
 
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width  = w;
-          canvas.height = h;
-          setDims({ width: w, height: h });
+      if (video && canvas && video.readyState >= 2) {
+        const dpr   = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+        const dispW = Math.round(canvas.clientWidth  * dpr);
+        const dispH = Math.round(canvas.clientHeight * dpr);
+
+        if (canvas.width !== dispW || canvas.height !== dispH) {
+          canvas.width  = dispW;
+          canvas.height = dispH;
         }
 
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, w, h);
 
-        try {
-          const imageData = ctx.getImageData(0, 0, w, h);
-          const filtered  = FILTER_PRESETS[activeFilter].apply(imageData);
-          ctx.putImageData(filtered, 0, 0);
-        } catch (err) {
-          if (err.name === 'SecurityError') {
-            setCamError('taint');
+        if (vw > 0 && vh > 0) {
+          // object-fit: cover — scale video to fill canvas, center-crop
+          const scale = Math.max(dispW / vw, dispH / vh);
+          const dw    = vw * scale;
+          const dh    = vh * scale;
+          ctx.drawImage(video, (dispW - dw) / 2, (dispH - dh) / 2, dw, dh);
+
+          try {
+            const imageData = ctx.getImageData(0, 0, dispW, dispH);
+            FILTER_PRESETS[activeFilter].apply(imageData, dispW, dispH);
+            ctx.putImageData(imageData, 0, 0);
+          } catch (err) {
+            if (err.name === 'SecurityError') setCamError('taint');
           }
         }
       }
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [activeFilter, dims]);
+  }, [activeFilter]);
 
   const stopLoop = useCallback(() => {
     if (rafRef.current) {
@@ -68,60 +65,45 @@ export default function App() {
     }
   }, []);
 
-  // ── Start / restart loop when filter changes ────────────────────────────────
+  // Restart loop whenever active filter or preview state changes
   useEffect(() => {
-    if (capturedUrl) return; // paused while previewing
+    if (capturedUrl) return;
     stopLoop();
     startLoop();
     return stopLoop;
   }, [activeFilter, capturedUrl, startLoop, stopLoop]);
 
-  // ── iOS autoplay watchdog — show "Tap to Start" if video stalls ────────────
+  // iOS autoplay watchdog
   useEffect(() => {
     const timer = setTimeout(() => {
       const video = webcamRef.current?.video;
-      if (video && video.readyState < 3 && !camError) {
-        setNeedsTap(true);
-      }
+      if (video && video.readyState < 3 && !camError) setNeedsTap(true);
     }, 2000);
     return () => clearTimeout(timer);
   }, [camError]);
 
-  // ── Camera error handlers ───────────────────────────────────────────────────
+  // ── Error handlers ──────────────────────────────────────────────────────────
   const handleUserMediaError = useCallback((err) => {
     const name = err?.name || '';
-    if (
-      name === 'NotAllowedError' ||
-      name === 'PermissionDeniedError' ||
-      err?.message?.includes('Permission')
-    ) {
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || err?.message?.includes('Permission')) {
       setCamError('denied');
-    } else if (
-      name === 'NotFoundError' ||
-      name === 'DevicesNotFoundError'
-    ) {
+    } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       setCamError('notfound');
     } else {
       setCamError('denied');
     }
   }, []);
 
-  // ── Capture ─────────────────────────────────────────────────────────────────
+  // ── Actions ─────────────────────────────────────────────────────────────────
   const handleCapture = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     stopLoop();
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-    setCapturedUrl(dataUrl);
+    setCapturedUrl(canvas.toDataURL('image/jpeg', 0.92));
   }, [stopLoop]);
 
-  // ── Retake ──────────────────────────────────────────────────────────────────
-  const handleRetake = useCallback(() => {
-    setCapturedUrl(null);
-    // loop restarts via effect when capturedUrl clears
-  }, []);
+  const handleRetake = useCallback(() => setCapturedUrl(null), []);
 
-  // ── Download ────────────────────────────────────────────────────────────────
   const handleDownload = useCallback(() => {
     if (!capturedUrl) return;
     const a = document.createElement('a');
@@ -132,15 +114,13 @@ export default function App() {
     document.body.removeChild(a);
   }, [capturedUrl]);
 
-  // ── iOS tap-to-start ────────────────────────────────────────────────────────
   const handleTap = useCallback(() => {
-    const video = webcamRef.current?.video;
-    if (video) video.play().catch(() => {});
+    webcamRef.current?.video?.play().catch(() => {});
     setNeedsTap(false);
     setTapDone(true);
   }, []);
 
-  // ── Render error states ─────────────────────────────────────────────────────
+  // ── Error screens ───────────────────────────────────────────────────────────
   if (camError === 'denied') {
     return (
       <div className="error-screen">
@@ -158,7 +138,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Hidden webcam — feeds video into canvas */}
+      {/* Hidden webcam — only used as video source */}
       <Webcam
         ref={webcamRef}
         audio={false}
@@ -167,80 +147,57 @@ export default function App() {
         videoConstraints={{ facingMode: 'environment' }}
         style={{ display: 'none' }}
         onUserMediaError={handleUserMediaError}
-        onUserMedia={syncDims}
       />
 
-      {/* Viewfinder */}
-      <div className="viewfinder-wrap">
-        <canvas
-          ref={canvasRef}
-          className="viewfinder"
-          width={dims.width}
-          height={dims.height}
-        />
+      {/* Viewfinder — fills entire screen */}
+      <canvas ref={canvasRef} className="viewfinder" />
 
-        {/* Canvas taint warning — overlay on viewfinder */}
-        {camError === 'taint' && (
-          <div className="taint-warning">
-            Filter preview unavailable on this browser — capture still works
-          </div>
-        )}
+      {/* Canvas taint warning */}
+      {camError === 'taint' && (
+        <div className="taint-warning">
+          Filter preview unavailable on this browser — capture still works
+        </div>
+      )}
 
-        {/* iOS tap-to-start overlay */}
-        {needsTap && !tapDone && (
-          <button className="tap-overlay" onClick={handleTap}>
-            Tap to Start
-          </button>
-        )}
-      </div>
+      {/* iOS tap-to-start */}
+      {needsTap && !tapDone && (
+        <button className="tap-overlay" onClick={handleTap}>
+          Tap to Start
+        </button>
+      )}
 
-      {/* Filter selector */}
-      <div className="filter-bar" role="listbox" aria-label="Filter presets">
-        {FILTER_PRESETS.map((preset, i) => (
+      {/* Controls — float over the viewfinder at the bottom */}
+      <div className="controls-overlay">
+        <div className="filter-bar" role="listbox" aria-label="Filter presets">
+          {FILTER_PRESETS.map((preset, i) => (
+            <button
+              key={preset.id}
+              role="option"
+              aria-selected={i === activeFilter}
+              className={`filter-pill${i === activeFilter ? ' active' : ''}`}
+              onClick={() => setActiveFilter(i)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="capture-row">
           <button
-            key={preset.id}
-            role="option"
-            aria-selected={i === activeFilter}
-            className={`filter-pill${i === activeFilter ? ' active' : ''}`}
-            onClick={() => setActiveFilter(i)}
-          >
-            {preset.label}
-          </button>
-        ))}
+            className="capture-btn"
+            aria-label="Capture photo"
+            onClick={handleCapture}
+          />
+        </div>
       </div>
 
-      {/* Capture button */}
-      <div className="capture-row">
-        <button
-          className="capture-btn"
-          aria-label="Capture photo"
-          onClick={handleCapture}
-        />
-      </div>
-
-      {/* Preview panel — slides up after capture */}
+      {/* Preview — fullscreen with bottom action buttons */}
       {capturedUrl && (
-        <div
-          className="preview-backdrop"
-          onClick={handleRetake}
-        >
-          <div
-            className="preview-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <img
-              src={capturedUrl}
-              alt="Captured"
-              className="preview-img"
-            />
-            <div className="preview-actions">
-              <button className="btn-retake" onClick={handleRetake}>
-                Retake
-              </button>
-              <button className="btn-save" onClick={handleDownload}>
-                Save
-              </button>
-            </div>
+        <div className="preview-screen">
+          <img src={capturedUrl} alt="Captured" className="preview-img" />
+          <div className="preview-actions">
+            <button className="btn-retake" onClick={handleRetake}>Retake</button>
+            <button className="btn-save"   onClick={handleDownload}>Save</button>
           </div>
         </div>
       )}
