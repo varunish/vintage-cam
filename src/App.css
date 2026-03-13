@@ -28,20 +28,9 @@ body {
   overflow: hidden;
 }
 
-/* ── Live viewfinder — react-webcam <video> element ─────────────────────── */
-/*
-  object-fit:cover is natively supported on <video> elements.
-  The browser handles all aspect-ratio cropping without any JS math.
-  The CSS filter prop on the element gives the live filter preview.
-*/
-.webcam-video {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: filter 0.2s ease;
-}
+/* Webcam <video> is sized entirely via inline style on the component —
+   see App.jsx. Inline styles have highest specificity so they can't be
+   overridden by react-webcam's default width/height attributes. */
 
 /* ── Controls overlay ────────────────────────────────────────────────────── */
 .controls-overlay {

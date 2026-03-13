@@ -107,11 +107,10 @@ export default function App() {
     <div className="app">
 
       {/*
-        react-webcam renders a <video> element that fills the container.
-        object-fit:cover (applied via .webcam-video CSS) handles the aspect
-        ratio scaling natively — zero canvas sizing bugs.
-        A CSS filter gives instant live preview of the selected preset.
-        The saved photo uses the full pixel-accurate LUT filter (FilterEngine).
+        All sizing via inline style — highest CSS specificity, guaranteed to
+        override any default width/height that react-webcam puts on the <video>.
+        objectFit:'cover' is the key: the browser crops the video stream to fill
+        the container natively, with zero JS math and zero stretching.
       */}
       <Webcam
         ref={webcamRef}
@@ -119,8 +118,16 @@ export default function App() {
         playsInline
         muted
         videoConstraints={{ facingMode: 'environment' }}
-        className="webcam-video"
-        style={{ filter: CSS_PREVIEWS[activeFilter] }}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          filter: CSS_PREVIEWS[activeFilter],
+          transition: 'filter 0.2s ease',
+        }}
         onUserMedia={handleUserMedia}
         onUserMediaError={handleUserMediaError}
       />
