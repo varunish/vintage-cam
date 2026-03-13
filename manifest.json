@@ -1,0 +1,22 @@
+{
+  "name": "Vintage Cam",
+  "short_name": "VintageCam",
+  "description": "Vintage film camera with Kodak, Polaroid, 70s and Faded filters",
+  "start_url": "/vintage-cam/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/vintage-cam/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/vintage-cam/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
